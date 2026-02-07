@@ -109,20 +109,54 @@ pub struct AgentLoop {
 }
 
 impl AgentLoop {
+    fn step(message: &str) {
+        eprintln!("[agent-loop] {message}");
+    }
+
+    fn retain_summary_best_effort(&self, task: &Task, content: String) {
+        if self.config.dry_run {
+            Self::step("dry-run: skipping hindsight retain_summary");
+            return;
+        }
+
+        Self::step("retaining summary to hindsight");
+        if let Err(err) = self.hindsight.retain_summary(
+            &self.config.hindsight_bank,
+            &format!("task-{}", task.id),
+            &task.title,
+            &content,
+        ) {
+            Self::step(&format!("warning: failed to retain summary: {err}"));
+            return;
+        }
+        Self::step("hindsight summary retained");
+    }
+
     pub fn run_once(&self) -> Result<RunOutcome> {
+        Self::step("starting single-run loop");
         self.hindsight.ensure_available()?;
+        Self::step("hindsight available");
         self.hindsight.recall_preferences()?;
+        Self::step("hindsight preferences recalled");
         self.hindsight
             .ensure_project_bank(&self.config.hindsight_bank)?;
+        Self::step(&format!(
+            "hindsight project bank ready: {}",
+            self.config.hindsight_bank
+        ));
 
         self.memory_bank.ensure_exists()?;
         self.memory_bank.prime()?;
+        Self::step("memory-bank PRIME completed");
 
         self.beads.ensure_initialized()?;
+        Self::step("beads initialized");
 
         let parent = if let Some(goal) = self.config.bootstrap_goal.as_deref() {
+            Self::step("creating bootstrap parent task");
             self.beads.create_bootstrap_parent_task(goal)?
         } else {
+            Self::step("claiming parent task");
             match self
                 .beads
                 .claim_parent_task(self.config.task_id.as_deref())?
@@ -131,14 +165,20 @@ impl AgentLoop {
                 None => return Ok(RunOutcome::NoReadyWork),
             }
         };
+        Self::step(&format!("parent task: {} ({})", parent.id, parent.title));
 
         self.beads.sync()?;
+        Self::step("beads synced");
 
         self.hindsight
             .recall_task_context(&self.config.hindsight_bank, &parent.title)?;
+        Self::step("hindsight task context recalled");
         self.memory_bank.prepare(&parent.title)?;
+        Self::step("memory-bank PREPARE completed");
 
+        Self::step("running product-storm");
         let storm = self.llm.product_storm(&parent)?;
+        Self::step("running spec-first");
         let spec = self.llm.spec_first(&parent, &storm)?;
 
         let mut spawn_budget = self.config.spawn_cap;
@@ -154,22 +194,25 @@ impl AgentLoop {
                 &mut created_children,
                 &mut closed_children,
             )?;
+            Self::step("initial spawn candidates processed");
         }
 
         let started_at = Instant::now();
         let timeout = self.config.timeout();
 
         for iteration in 1..=self.config.max_iterations {
+            Self::step(&format!(
+                "iteration {iteration}/{}",
+                self.config.max_iterations
+            ));
             if started_at.elapsed() >= timeout {
                 let reason = "timeout exceeded".to_string();
                 self.beads.block_task(&parent.id, &reason)?;
                 self.beads.sync()?;
-                self.hindsight.retain_summary(
-                    &self.config.hindsight_bank,
-                    &format!("task-{}", parent.id),
-                    &parent.title,
-                    &format!("Task requires human intervention: {reason}"),
-                )?;
+                self.retain_summary_best_effort(
+                    &parent,
+                    format!("Task requires human intervention: {reason}"),
+                );
                 return Ok(RunOutcome::NeedsHuman {
                     task_id: parent.id,
                     reason,
@@ -181,9 +224,18 @@ impl AgentLoop {
             self.llm.run_red_phase(&parent, &spec, iteration)?;
             self.llm.run_green_phase(&parent, &spec, iteration)?;
             self.llm.run_refactor_phase(&parent, &spec, iteration)?;
+            Self::step("tdd cycle completed");
 
             let gates = self.gates.run_core_gates(&parent, &spec)?;
+            Self::step(&format!(
+                "quality gates: fmt={}, clippy={}, tests={}, perf={}",
+                gates.fmt_ok, gates.clippy_ok, gates.tests_ok, gates.perf_ok
+            ));
             let review = self.llm.review(&parent, &spec, iteration)?;
+            Self::step(&format!(
+                "review: status={:?}, coverage={:.2}",
+                review.status, review.coverage_score
+            ));
 
             if can_spawn_children {
                 self.process_spawn_candidates(
@@ -193,6 +245,7 @@ impl AgentLoop {
                     &mut created_children,
                     &mut closed_children,
                 )?;
+                Self::step("review spawn candidates processed");
             }
 
             let open_children = self.beads.list_open_children(&parent.id)?;
@@ -203,12 +256,10 @@ impl AgentLoop {
                 self.beads
                     .close_task(&parent.id, "agent-loop: decomposition handoff completed")?;
                 self.beads.sync()?;
-                self.hindsight.retain_summary(
-                    &self.config.hindsight_bank,
-                    &format!("task-{}", parent.id),
-                    &parent.title,
-                    "Task closed as decomposition handoff with delegated child tasks",
-                )?;
+                self.retain_summary_best_effort(
+                    &parent,
+                    "Task closed as decomposition handoff with delegated child tasks".to_string(),
+                );
                 return Ok(RunOutcome::Done {
                     task_id: parent.id,
                     created_children,
@@ -228,22 +279,25 @@ impl AgentLoop {
 
             match decision {
                 DoneDecision::Done => {
+                    Self::step("decision: DONE");
                     self.beads.close_task(&parent.id, "agent-loop: completed")?;
                     self.beads.sync()?;
-                    self.hindsight.retain_summary(
-                        &self.config.hindsight_bank,
-                        &format!("task-{}", parent.id),
-                        &parent.title,
-                        "Task completed with done decision",
-                    )?;
+                    self.retain_summary_best_effort(
+                        &parent,
+                        "Task completed with done decision".to_string(),
+                    );
                     return Ok(RunOutcome::Done {
                         task_id: parent.id,
                         created_children,
                         closed_children,
                     });
                 }
-                DoneDecision::Rework => continue,
+                DoneDecision::Rework => {
+                    Self::step("decision: REWORK");
+                    continue;
+                }
                 DoneDecision::NeedsHuman => {
+                    Self::step("decision: NEEDS_HUMAN");
                     let reason = self.needs_human_reason(
                         &gates,
                         &review,
@@ -252,12 +306,10 @@ impl AgentLoop {
                     );
                     self.beads.block_task(&parent.id, &reason)?;
                     self.beads.sync()?;
-                    self.hindsight.retain_summary(
-                        &self.config.hindsight_bank,
-                        &format!("task-{}", parent.id),
-                        &parent.title,
-                        &format!("Task requires human intervention: {reason}"),
-                    )?;
+                    self.retain_summary_best_effort(
+                        &parent,
+                        format!("Task requires human intervention: {reason}"),
+                    );
                     return Ok(RunOutcome::NeedsHuman {
                         task_id: parent.id,
                         reason,
@@ -271,12 +323,10 @@ impl AgentLoop {
         let reason = "parent iteration limit reached".to_string();
         self.beads.block_task(&parent.id, &reason)?;
         self.beads.sync()?;
-        self.hindsight.retain_summary(
-            &self.config.hindsight_bank,
-            &format!("task-{}", parent.id),
-            &parent.title,
-            &format!("Task requires human intervention: {reason}"),
-        )?;
+        self.retain_summary_best_effort(
+            &parent,
+            format!("Task requires human intervention: {reason}"),
+        );
         Ok(RunOutcome::NeedsHuman {
             task_id: parent.id,
             reason,

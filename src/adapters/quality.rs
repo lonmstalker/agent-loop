@@ -13,19 +13,27 @@ impl CargoQualityGates {
         Self { shell }
     }
 
-    fn is_ok(&self, args: &[&str]) -> Result<bool> {
+    fn is_ok(&self, step: &str, args: &[&str]) -> Result<bool> {
+        eprintln!("[agent-loop] quality gate: {step}");
         let out = self.shell.run("cargo", args)?;
+        eprintln!(
+            "[agent-loop] quality gate result: {step} => {}",
+            if out.success() { "ok" } else { "failed" }
+        );
         Ok(out.success())
     }
 }
 
 impl QualityGateRunner for CargoQualityGates {
     fn run_core_gates(&self, _task: &Task, spec: &SpecOutput) -> Result<GateReport> {
-        let fmt_ok = self.is_ok(&["fmt", "--", "--check"])?;
-        let clippy_ok = self.is_ok(&["clippy", "--", "-D", "warnings"])?;
-        let tests_ok = self.is_ok(&["test"])?;
+        let fmt_ok = self.is_ok("cargo fmt -- --check", &["fmt", "--", "--check"])?;
+        let clippy_ok = self.is_ok(
+            "cargo clippy -- -D warnings",
+            &["clippy", "--", "-D", "warnings"],
+        )?;
+        let tests_ok = self.is_ok("cargo test", &["test"])?;
         let perf_ok = if spec.requires_perf_gate {
-            self.is_ok(&["test", "--release"])?
+            self.is_ok("cargo test --release", &["test", "--release"])?
         } else {
             true
         };
