@@ -60,6 +60,29 @@ cargo build --release
   --hindsight-bank agent-loop
 ```
 
+## Профили и политика quality gates
+
+`agent-loop run` поддерживает профили:
+- `delivery` (default): все quality gates блокируют `Done`.
+- `discovery`: `clippy` считается non-blocking; при провале создаётся debt child-задача.
+- `hardening`: максимально строгий режим; non-blocking gates отключаются.
+
+Тонкая настройка:
+- `--non-blocking-gates clippy,fmt` — вручную задать non-blocking gates.
+- `--retain-mode sync|async|off` — как сохранять summary в hindsight.
+- `--json-events` — печатать machine-readable events в stdout.
+
+Пример «не стопорить loop из-за clippy и не ждать sync retain»:
+
+```bash
+agent-loop run \
+  --bootstrap "Оптимизировать code-indexer: first-run index + disk usage" \
+  --hindsight-bank agent-loop \
+  --profile discovery \
+  --retain-mode async \
+  --json-events
+```
+
 ## Опционально: добавить бинарник в PATH
 
 ```bash

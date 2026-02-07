@@ -31,6 +31,12 @@ description: Запускает и сопровождает `agent-loop run` д�
      `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task <task-id> --hindsight-bank agent-loop`
    - если задач ещё нет: использовать bootstrap-режим
      `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --bootstrap "<goal>" --hindsight-bank agent-loop`
+   - если нужен discovery-проход без блокировки по clippy:
+     добавить `--profile discovery` (создаст quality debt child-задачу при clippy fail)
+   - если retain в hindsight не должен блокировать UX:
+     добавить `--retain-mode async` (или `--retain-mode off`)
+   - если нужна интеграция с оркестратором:
+     добавить `--json-events`
    - модель не задавать без явной необходимости (по умолчанию `gpt-5.3-codex`).
 
 5. Передать креды безопасно:
@@ -66,6 +72,17 @@ Bootstrap (когда нет задач в `bd`):
   --hindsight-bank agent-loop
 ```
 
+Discovery + async retain + json events:
+
+```bash
+/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
+  --bootstrap "<goal>" \
+  --profile discovery \
+  --retain-mode async \
+  --json-events \
+  --hindsight-bank agent-loop
+```
+
 С override модели:
 
 ```bash
@@ -86,3 +103,4 @@ AGENT_LOOP_MODEL=<model-id> \
 - Не использовать `--dry-run`, если пользователь явно не просил dry run.
 - Не менять `max_iterations`, `spawn_cap`, `timeout_minutes` без явного запроса.
 - Если loop вернул `NeedsHuman`, не скрывать причину и не отмечать задачу как завершённую.
+- Для production hardening использовать `--profile hardening`.

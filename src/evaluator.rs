@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use crate::contracts::{DoneDecision, GateReport, ReviewOutput, ReviewStatus};
+use std::collections::HashSet;
+
+use crate::contracts::{DoneDecision, GateName, GateReport, ReviewOutput, ReviewStatus};
 
 #[derive(Debug, Clone)]
 pub struct DoneEvaluatorConfig {
@@ -23,6 +25,7 @@ pub struct DoneEvaluator {
 #[derive(Debug, Clone)]
 pub struct ParentDecisionInput<'a> {
     pub gates: &'a GateReport,
+    pub non_blocking_gates: &'a HashSet<GateName>,
     pub review: &'a ReviewOutput,
     pub has_open_blocking_children: bool,
     pub parent_iteration: u32,
@@ -37,7 +40,9 @@ impl DoneEvaluator {
             return DoneDecision::NeedsHuman;
         }
 
-        let ready_for_done = input.gates.all_passed()
+        let ready_for_done = input
+            .gates
+            .all_passed_with_non_blocking(input.non_blocking_gates)
             && !input.has_open_blocking_children
             && input.review.coverage_score >= self.config.coverage_threshold
             && input.review.missing_items.is_empty()
@@ -52,8 +57,13 @@ impl DoneEvaluator {
         }
     }
 
-    pub fn decide_child(&self, gates: &GateReport, review: &ReviewOutput) -> DoneDecision {
-        let ready_for_done = gates.all_passed()
+    pub fn decide_child(
+        &self,
+        gates: &GateReport,
+        review: &ReviewOutput,
+        non_blocking_gates: &HashSet<GateName>,
+    ) -> DoneDecision {
+        let ready_for_done = gates.all_passed_with_non_blocking(non_blocking_gates)
             && review.coverage_score >= self.config.coverage_threshold
             && review.missing_items.is_empty()
             && matches!(review.status, ReviewStatus::Done);

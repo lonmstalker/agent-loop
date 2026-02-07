@@ -105,8 +105,15 @@ impl HindsightClient for HindsightCli {
         Ok(())
     }
 
-    fn retain_summary(&self, bank: &str, doc_id: &str, context: &str, content: &str) -> Result<()> {
-        let _ = self.run_checked(&[
+    fn retain_summary(
+        &self,
+        bank: &str,
+        doc_id: &str,
+        context: &str,
+        content: &str,
+        async_mode: bool,
+    ) -> Result<()> {
+        let mut args = vec![
             "memory",
             "retain",
             bank,
@@ -115,7 +122,11 @@ impl HindsightClient for HindsightCli {
             context,
             "--doc-id",
             doc_id,
-        ])?;
+        ];
+        if async_mode {
+            args.push("--async");
+        }
+        let _ = self.run_checked(&args)?;
         Ok(())
     }
 }

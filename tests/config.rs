@@ -1,8 +1,11 @@
 use clap::Parser;
 
 use agent_loop::config::{
-    Cli, Commands, DEFAULT_MODEL, resolve_openai_api_key, resolve_openai_base_url,
+    Cli, Commands, DEFAULT_MODEL, LoopProfile, RetainMode, resolve_openai_api_key,
+    resolve_openai_base_url,
 };
+use agent_loop::contracts::GateName;
+use agent_loop::loop_runner::RunConfig;
 
 #[test]
 fn uses_default_model_gpt_5_3_codex_when_not_overridden() {
@@ -29,6 +32,10 @@ fn model_override_via_flag_or_env_has_priority_over_default() {
         small_child_threshold_minutes: 20,
         model: Some("env-model".to_string()),
         hindsight_bank: "agent-loop".to_string(),
+        profile: LoopProfile::Delivery,
+        non_blocking_gates: vec![],
+        retain_mode: RetainMode::Sync,
+        json_events: false,
         dry_run: false,
     };
 
@@ -45,6 +52,38 @@ fn parses_bootstrap_goal_for_taskless_product_storm() {
         run.resolved_bootstrap_goal().as_deref(),
         Some("Новый продукт")
     );
+}
+
+#[test]
+fn parses_profile_and_non_blocking_gates() {
+    let cli = Cli::parse_from([
+        "agent-loop",
+        "run",
+        "--profile",
+        "discovery",
+        "--non-blocking-gates",
+        "clippy,fmt",
+        "--retain-mode",
+        "async",
+        "--json-events",
+    ]);
+    let Commands::Run(run) = cli.command;
+
+    assert!(matches!(run.profile, LoopProfile::Discovery));
+    assert!(matches!(run.retain_mode, RetainMode::Async));
+    assert!(run.json_events);
+    let gates = run.resolved_non_blocking_gates();
+    assert!(gates.contains(&GateName::Clippy));
+    assert!(gates.contains(&GateName::Fmt));
+}
+
+#[test]
+fn discovery_profile_adds_default_non_blocking_clippy() {
+    let cli = Cli::parse_from(["agent-loop", "run", "--profile", "discovery"]);
+    let Commands::Run(run) = cli.command;
+    let cfg: RunConfig = run.into();
+
+    assert!(cfg.non_blocking_gates.contains(&GateName::Clippy));
 }
 
 #[test]

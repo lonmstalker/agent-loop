@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
+use agent_loop::config::{LoopProfile, RetainMode};
 use agent_loop::contracts::{
-    GateReport, ProductStormOutput, ReviewOutput, ReviewStatus, RunOutcome, SpawnTaskCandidate,
-    SpawnTaskKind, SpecOutput, Task, TaskStatus,
+    GateName, GateReport, ProductStormOutput, ReviewOutput, ReviewStatus, RunOutcome,
+    SpawnTaskCandidate, SpawnTaskKind, SpecOutput, Task, TaskStatus,
 };
 use agent_loop::evaluator::DoneEvaluator;
 use agent_loop::loop_runner::{
@@ -215,6 +216,7 @@ impl HindsightClient for MockHindsight {
         _doc_id: &str,
         _context: &str,
         _content: &str,
+        _async_mode: bool,
     ) -> Result<()> {
         self.state.lock().unwrap().retain_calls += 1;
         Ok(())
@@ -418,6 +420,10 @@ fn run_config() -> RunConfig {
         small_child_threshold_minutes: 20,
         model: "gpt-5.3-codex".to_string(),
         hindsight_bank: "agent-loop".to_string(),
+        profile: LoopProfile::Delivery,
+        non_blocking_gates: HashSet::new(),
+        retain_mode: RetainMode::Sync,
+        json_events: false,
         dry_run: false,
     }
 }
@@ -638,6 +644,50 @@ fn gate_failure_forces_rework_then_needs_human_on_limit() {
         }
         _ => panic!("expected needs human"),
     }
+}
+
+#[test]
+fn non_blocking_clippy_creates_debt_child_and_allows_done() {
+    let mut cfg = run_config();
+    cfg.non_blocking_gates.insert(GateName::Clippy);
+
+    let beads = MockBeads::new(Some(parent_task()), vec![]);
+    let beads_state = beads.state.clone();
+    let outcome = AgentLoop {
+        config: cfg,
+        beads: Box::new(beads),
+        hindsight: Box::new(MockHindsight::new()),
+        memory_bank: Box::new(MockMemory::new()),
+        llm: Box::new(MockLlm::new(
+            ProductStormOutput::default(),
+            vec![ReviewOutput {
+                status: ReviewStatus::Done,
+                coverage_score: 1.0,
+                missing_items: vec![],
+                spawn_candidates: vec![],
+                risk_flags: vec![],
+            }],
+        )),
+        gates: Box::new(MockGates::new(vec![GateReport {
+            fmt_ok: true,
+            clippy_ok: false,
+            tests_ok: true,
+            perf_ok: true,
+        }])),
+        evaluator: DoneEvaluator::default(),
+    }
+    .run_once()
+    .unwrap();
+
+    assert!(matches!(outcome, RunOutcome::Done { .. }));
+    let state = beads_state.lock().unwrap();
+    assert!(
+        state
+            .children
+            .iter()
+            .any(|task| task.title.contains("Fix clippy gate")),
+        "expected clippy debt child task"
+    );
 }
 
 #[test]

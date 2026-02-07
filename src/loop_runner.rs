@@ -1,11 +1,13 @@
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use serde_json::json;
 
-use crate::config::RunCommand;
+use crate::config::{LoopProfile, RetainMode, RunCommand};
 use crate::contracts::{
-    DoneDecision, GateReport, ProductStormOutput, ReviewOutput, RunOutcome, SpawnTaskCandidate,
-    SpawnTaskKind, SpecOutput, Task,
+    DoneDecision, GateName, GateReport, ProductStormOutput, ReviewOutput, RunOutcome,
+    SpawnTaskCandidate, SpawnTaskKind, SpecOutput, Task,
 };
 use crate::evaluator::{DoneEvaluator, ParentDecisionInput};
 
@@ -20,6 +22,10 @@ pub struct RunConfig {
     pub small_child_threshold_minutes: u32,
     pub model: String,
     pub hindsight_bank: String,
+    pub profile: LoopProfile,
+    pub non_blocking_gates: HashSet<GateName>,
+    pub retain_mode: RetainMode,
+    pub json_events: bool,
     pub dry_run: bool,
 }
 
@@ -28,6 +34,14 @@ impl From<RunCommand> for RunConfig {
         let task_id = value.task.clone();
         let bootstrap_goal = value.resolved_bootstrap_goal();
         let model = value.resolved_model();
+        let profile = value.profile;
+        let mut non_blocking_gates = value.resolved_non_blocking_gates();
+        if matches!(profile, LoopProfile::Discovery) {
+            non_blocking_gates.insert(GateName::Clippy);
+        }
+        if matches!(profile, LoopProfile::Hardening) {
+            non_blocking_gates.clear();
+        }
         Self {
             task_id,
             bootstrap_goal,
@@ -38,6 +52,10 @@ impl From<RunCommand> for RunConfig {
             small_child_threshold_minutes: value.small_child_threshold_minutes,
             model,
             hindsight_bank: value.hindsight_bank,
+            profile,
+            non_blocking_gates,
+            retain_mode: value.retain_mode,
+            json_events: value.json_events,
             dry_run: value.dry_run,
         }
     }
@@ -76,7 +94,14 @@ pub trait HindsightClient: Send + Sync {
     fn ensure_project_bank(&self, bank: &str) -> Result<()>;
     fn recall_preferences(&self) -> Result<()>;
     fn recall_task_context(&self, bank: &str, query: &str) -> Result<()>;
-    fn retain_summary(&self, bank: &str, doc_id: &str, context: &str, content: &str) -> Result<()>;
+    fn retain_summary(
+        &self,
+        bank: &str,
+        doc_id: &str,
+        context: &str,
+        content: &str,
+        async_mode: bool,
+    ) -> Result<()>;
 }
 
 pub trait MemoryBankClient: Send + Sync {
@@ -109,54 +134,146 @@ pub struct AgentLoop {
 }
 
 impl AgentLoop {
-    fn step(message: &str) {
+    fn emit_json_event(&self, phase: &str, detail: &str) {
+        if !self.config.json_events {
+            return;
+        }
+        let event = json!({
+            "type": "agent_loop_event",
+            "phase": phase,
+            "detail": detail,
+            "profile": format!("{:?}", self.config.profile).to_lowercase(),
+        });
+        println!("{event}");
+    }
+
+    fn step(&self, message: &str) {
         eprintln!("[agent-loop] {message}");
+        self.emit_json_event("progress", message);
     }
 
     fn retain_summary_best_effort(&self, task: &Task, content: String) {
         if self.config.dry_run {
-            Self::step("dry-run: skipping hindsight retain_summary");
+            self.step("dry-run: skipping hindsight retain_summary");
             return;
         }
 
-        Self::step("retaining summary to hindsight");
+        if matches!(self.config.retain_mode, RetainMode::Off) {
+            self.step("retain-mode=off: skipping hindsight retain_summary");
+            return;
+        }
+
+        let async_mode = matches!(self.config.retain_mode, RetainMode::Async);
+        self.step(if async_mode {
+            "retaining summary to hindsight (async)"
+        } else {
+            "retaining summary to hindsight"
+        });
         if let Err(err) = self.hindsight.retain_summary(
             &self.config.hindsight_bank,
             &format!("task-{}", task.id),
             &task.title,
             &content,
+            async_mode,
         ) {
-            Self::step(&format!("warning: failed to retain summary: {err}"));
+            self.step(&format!("warning: failed to retain summary: {err}"));
             return;
         }
-        Self::step("hindsight summary retained");
+        self.step("hindsight summary retained");
+    }
+
+    fn format_gate_statuses(gates: &GateReport) -> String {
+        format!(
+            "fmt={}, clippy={}, tests={}, perf={}",
+            gates.fmt_ok, gates.clippy_ok, gates.tests_ok, gates.perf_ok
+        )
+    }
+
+    fn create_non_blocking_gate_debt(
+        &self,
+        parent: &Task,
+        gates: &GateReport,
+        spawn_budget: &mut usize,
+        created_children: &mut Vec<String>,
+    ) -> Result<()> {
+        if parent.parent_id.is_some() {
+            return Ok(());
+        }
+
+        let non_blocking_failures = gates
+            .failing_gates()
+            .into_iter()
+            .filter(|gate| self.config.non_blocking_gates.contains(gate))
+            .collect::<Vec<_>>();
+
+        for gate in non_blocking_failures {
+            if *spawn_budget == 0 {
+                self.step("spawn budget exhausted while creating quality debt tasks");
+                break;
+            }
+
+            let candidate = SpawnTaskCandidate {
+                title: format!("[Quality] Fix {} gate for {}", gate, parent.id),
+                description: format!(
+                    "Auto-generated quality debt: non-blocking gate '{}' failed for parent task {}.\nGate statuses: {}",
+                    gate,
+                    parent.id,
+                    Self::format_gate_statuses(gates)
+                ),
+                kind: SpawnTaskKind::Quality,
+                blocking: false,
+                estimated_minutes: 30,
+                can_inline: false,
+                acceptance: vec![format!("{} gate passes for task {}", gate, parent.id)],
+                priority: 2,
+                labels: vec!["auto-generated".to_string(), "quality-debt".to_string()],
+            };
+
+            let duplicates = self.beads.search_duplicates(&parent.id, &candidate)?;
+            if !duplicates.is_empty() {
+                continue;
+            }
+
+            if self.config.dry_run {
+                *spawn_budget = spawn_budget.saturating_sub(1);
+                continue;
+            }
+
+            let child = self.beads.create_child_task(&parent.id, &candidate)?;
+            created_children.push(child.id.clone());
+            self.beads.sync()?;
+            *spawn_budget = spawn_budget.saturating_sub(1);
+            self.step(&format!("created quality debt child: {}", child.id));
+        }
+
+        Ok(())
     }
 
     pub fn run_once(&self) -> Result<RunOutcome> {
-        Self::step("starting single-run loop");
+        self.step("starting single-run loop");
         self.hindsight.ensure_available()?;
-        Self::step("hindsight available");
+        self.step("hindsight available");
         self.hindsight.recall_preferences()?;
-        Self::step("hindsight preferences recalled");
+        self.step("hindsight preferences recalled");
         self.hindsight
             .ensure_project_bank(&self.config.hindsight_bank)?;
-        Self::step(&format!(
+        self.step(&format!(
             "hindsight project bank ready: {}",
             self.config.hindsight_bank
         ));
 
         self.memory_bank.ensure_exists()?;
         self.memory_bank.prime()?;
-        Self::step("memory-bank PRIME completed");
+        self.step("memory-bank PRIME completed");
 
         self.beads.ensure_initialized()?;
-        Self::step("beads initialized");
+        self.step("beads initialized");
 
         let parent = if let Some(goal) = self.config.bootstrap_goal.as_deref() {
-            Self::step("creating bootstrap parent task");
+            self.step("creating bootstrap parent task");
             self.beads.create_bootstrap_parent_task(goal)?
         } else {
-            Self::step("claiming parent task");
+            self.step("claiming parent task");
             match self
                 .beads
                 .claim_parent_task(self.config.task_id.as_deref())?
@@ -165,20 +282,20 @@ impl AgentLoop {
                 None => return Ok(RunOutcome::NoReadyWork),
             }
         };
-        Self::step(&format!("parent task: {} ({})", parent.id, parent.title));
+        self.step(&format!("parent task: {} ({})", parent.id, parent.title));
 
         self.beads.sync()?;
-        Self::step("beads synced");
+        self.step("beads synced");
 
         self.hindsight
             .recall_task_context(&self.config.hindsight_bank, &parent.title)?;
-        Self::step("hindsight task context recalled");
+        self.step("hindsight task context recalled");
         self.memory_bank.prepare(&parent.title)?;
-        Self::step("memory-bank PREPARE completed");
+        self.step("memory-bank PREPARE completed");
 
-        Self::step("running product-storm");
+        self.step("running product-storm");
         let storm = self.llm.product_storm(&parent)?;
-        Self::step("running spec-first");
+        self.step("running spec-first");
         let spec = self.llm.spec_first(&parent, &storm)?;
 
         let mut spawn_budget = self.config.spawn_cap;
@@ -194,14 +311,14 @@ impl AgentLoop {
                 &mut created_children,
                 &mut closed_children,
             )?;
-            Self::step("initial spawn candidates processed");
+            self.step("initial spawn candidates processed");
         }
 
         let started_at = Instant::now();
         let timeout = self.config.timeout();
 
         for iteration in 1..=self.config.max_iterations {
-            Self::step(&format!(
+            self.step(&format!(
                 "iteration {iteration}/{}",
                 self.config.max_iterations
             ));
@@ -224,15 +341,23 @@ impl AgentLoop {
             self.llm.run_red_phase(&parent, &spec, iteration)?;
             self.llm.run_green_phase(&parent, &spec, iteration)?;
             self.llm.run_refactor_phase(&parent, &spec, iteration)?;
-            Self::step("tdd cycle completed");
+            self.step("tdd cycle completed");
 
             let gates = self.gates.run_core_gates(&parent, &spec)?;
-            Self::step(&format!(
-                "quality gates: fmt={}, clippy={}, tests={}, perf={}",
-                gates.fmt_ok, gates.clippy_ok, gates.tests_ok, gates.perf_ok
+            self.step(&format!(
+                "quality gates: {}",
+                Self::format_gate_statuses(&gates)
             ));
+
+            self.create_non_blocking_gate_debt(
+                &parent,
+                &gates,
+                &mut spawn_budget,
+                &mut created_children,
+            )?;
+
             let review = self.llm.review(&parent, &spec, iteration)?;
-            Self::step(&format!(
+            self.step(&format!(
                 "review: status={:?}, coverage={:.2}",
                 review.status, review.coverage_score
             ));
@@ -245,7 +370,7 @@ impl AgentLoop {
                     &mut created_children,
                     &mut closed_children,
                 )?;
-                Self::step("review spawn candidates processed");
+                self.step("review spawn candidates processed");
             }
 
             let open_children = self.beads.list_open_children(&parent.id)?;
@@ -269,6 +394,7 @@ impl AgentLoop {
 
             let decision = self.evaluator.decide_parent(&ParentDecisionInput {
                 gates: &gates,
+                non_blocking_gates: &self.config.non_blocking_gates,
                 review: &review,
                 has_open_blocking_children,
                 parent_iteration: iteration,
@@ -279,7 +405,7 @@ impl AgentLoop {
 
             match decision {
                 DoneDecision::Done => {
-                    Self::step("decision: DONE");
+                    self.step("decision: DONE");
                     self.beads.close_task(&parent.id, "agent-loop: completed")?;
                     self.beads.sync()?;
                     self.retain_summary_best_effort(
@@ -293,11 +419,11 @@ impl AgentLoop {
                     });
                 }
                 DoneDecision::Rework => {
-                    Self::step("decision: REWORK");
+                    self.step("decision: REWORK");
                     continue;
                 }
                 DoneDecision::NeedsHuman => {
-                    Self::step("decision: NEEDS_HUMAN");
+                    self.step("decision: NEEDS_HUMAN");
                     let reason = self.needs_human_reason(
                         &gates,
                         &review,
@@ -436,7 +562,8 @@ impl AgentLoop {
         let review = self.llm.review(child, &spec, 1)?;
 
         Ok(matches!(
-            self.evaluator.decide_child(&gates, &review),
+            self.evaluator
+                .decide_child(&gates, &review, &self.config.non_blocking_gates),
             DoneDecision::Done
         ))
     }
@@ -447,7 +574,9 @@ impl AgentLoop {
         gates: &GateReport,
         open_children: &[Task],
     ) -> bool {
-        if !gates.all_passed() || open_children.is_empty() {
+        if !gates.all_passed_with_non_blocking(&self.config.non_blocking_gates)
+            || open_children.is_empty()
+        {
             return false;
         }
 
@@ -472,10 +601,17 @@ impl AgentLoop {
         if timed_out {
             return "timeout exceeded".to_string();
         }
-        if !gates.fmt_ok || !gates.clippy_ok || !gates.tests_ok || !gates.perf_ok {
+        let blocking_failures = gates.blocking_failures(&self.config.non_blocking_gates);
+        if !blocking_failures.is_empty() {
+            let failed = blocking_failures
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
             return format!(
-                "quality gates failed (fmt={}, clippy={}, tests={}, perf={})",
-                gates.fmt_ok, gates.clippy_ok, gates.tests_ok, gates.perf_ok
+                "quality gates failed [{}] ({})",
+                failed,
+                Self::format_gate_statuses(gates)
             );
         }
         if has_open_blocking_children {
