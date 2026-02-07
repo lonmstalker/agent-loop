@@ -7,10 +7,8 @@ use agent_loop::adapters::beads::BeadsCli;
 use agent_loop::adapters::hindsight::HindsightCli;
 use agent_loop::adapters::memory_bank::FileMemoryBank;
 use agent_loop::adapters::openai::OpenAiResponsesClient;
-use agent_loop::adapters::quality::CargoQualityGates;
 use agent_loop::adapters::shell::ProcessShell;
 use agent_loop::config::{Cli, Commands, resolve_openai_api_key, resolve_openai_base_url};
-use agent_loop::evaluator::DoneEvaluator;
 use agent_loop::loop_runner::{AgentLoop, RunConfig};
 
 fn main() -> Result<()> {
@@ -36,8 +34,6 @@ fn main() -> Result<()> {
                     ),
                     resolve_openai_api_key(openai_api_key, vibeproxy_api_key),
                 )),
-                gates: Box::new(CargoQualityGates::new(Box::new(ProcessShell))),
-                evaluator: DoneEvaluator::default(),
             };
 
             let outcome = engine.run_once()?;

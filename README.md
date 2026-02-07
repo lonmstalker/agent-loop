@@ -1,14 +1,16 @@
 # agent-loop
 
-`agent-loop` — single-run оркестратор для задач из `bd` с workflow:
-`memory-bank -> product-storm/spec-first -> TDD (red/green/refactor) -> quality gates -> done evaluator`.
+`agent-loop` — single-run оркестратор для `bd`-задач, который:
+- берёт parent-задачу (`--task` или `--bootstrap`);
+- делает `memory-bank PRIME/PREPARE + product-storm + spec-first`;
+- создаёт child-задачи (dedup + blocking dependencies);
+- возвращает итеративный командный план для внешнего агента.
 
-По умолчанию модель: `gpt-5.3-codex`.
-По умолчанию driver: `agent` (loop выдаёт команды агенту, а не выполняет code-команды сам).
+Важно: loop **не запускает project-команды** (`cargo fmt/clippy/test`) сам, а только выдаёт их агенту.
+
+Default model: `gpt-5.3-codex`.
 
 ## Установка skill для Codex
-
-1. Скопируйте skill в локальные skills Codex:
 
 ```bash
 mkdir -p "$CODEX_HOME/skills"
@@ -16,7 +18,7 @@ cp -R "/Users/nikitakocnev/RustroverProjects/agent-loop/skills/agent-loop-runner
   "$CODEX_HOME/skills/agent-loop-runner"
 ```
 
-2. Откройте новый чат в Codex (или перезапустите сессию), чтобы skill подхватился.
+После копирования откройте новый чат Codex.
 
 ## Минимальная настройка окружения
 
@@ -26,112 +28,67 @@ export VIBEPROXY_API_KEY="<your-token>"
 
 Если задан только `VIBEPROXY_API_KEY`, loop автоматически использует `OPENAI_BASE_URL=http://127.0.0.1:8318`.
 
-## Сборка release (один раз заранее)
+## Сборка release
 
 ```bash
 cd /Users/nikitakocnev/RustroverProjects/agent-loop
 cargo build --release
 ```
 
-После этого можно запускать loop из любой директории.
+## Запуск из любой директории
 
-## Запуск loop из любой директории
+Существующая задача:
 
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --task <bd-task-id> \
-  --driver agent \
   --hindsight-bank agent-loop
 ```
 
-Пример:
-
-```bash
-/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
-  --task agent-loop-84u.2 \
-  --driver agent \
-  --hindsight-bank agent-loop
-```
-
-## Запуск product-storm без существующих задач
-
-`agent-loop` может сам создать bootstrap parent-задачу и сразу запустить loop:
+Bootstrap (если задач ещё нет):
 
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --bootstrap "Сформировать roadmap для production-ready agent-loop" \
-  --driver agent \
   --hindsight-bank agent-loop
 ```
 
-## Driver режимы
+## Использование через чат Codex
 
-- `--driver agent` (default):
-  - loop публикует итеративный TDD-командный план;
-  - агент выполняет команды и проверяет результат;
-  - loop сам не запускает `cargo fmt/clippy/test`.
-- `--driver autonomous`:
-  - loop выполняет quality gates и принятие решений сам.
-
-## Профили и политика quality gates
-
-`agent-loop run` поддерживает профили:
-- `delivery` (default): все quality gates блокируют `Done`.
-- `discovery`: `clippy` считается non-blocking; при провале создаётся debt child-задача.
-- `hardening`: максимально строгий режим; non-blocking gates отключаются.
-
-Тонкая настройка:
-- `--non-blocking-gates clippy,fmt` — вручную задать non-blocking gates.
-- `--retain-mode sync|async|off` — как сохранять summary в hindsight.
-- `--json-events` — печатать machine-readable events в stdout.
-
-Пример «не стопорить loop из-за clippy и не ждать sync retain»:
-
-```bash
-agent-loop run \
-  --bootstrap "Оптимизировать code-indexer: first-run index + disk usage" \
-  --driver autonomous \
-  --hindsight-bank agent-loop \
-  --profile discovery \
-  --retain-mode async \
-  --json-events
-```
-
-## Опционально: добавить бинарник в PATH
-
-```bash
-export PATH="/Users/nikitakocnev/RustroverProjects/agent-loop/target/release:$PATH"
-agent-loop run --task agent-loop-84u.2 --hindsight-bank agent-loop
-```
-
-## Опционально: установить как global binary через cargo
-
-```bash
-cargo install --path /Users/nikitakocnev/RustroverProjects/agent-loop --force
-agent-loop run --task agent-loop-84u.2 --hindsight-bank agent-loop
-```
-
-## Шаблон запроса в чат Codex
-
-Используйте такой промпт:
+Шаблон запроса:
 
 ```text
-Используй skill agent-loop-runner и запусти loop для задачи agent-loop-84u.2.
-Команда: /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task agent-loop-84u.2 --driver agent --hindsight-bank agent-loop
+Используй skill agent-loop-runner и запусти loop для задачи <bd-task-id>.
+Команда: /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task <bd-task-id> --hindsight-bank agent-loop
 ```
 
-## Переопределение модели (опционально)
+Для product-storm без задач:
 
-Приоритет модели:
+```text
+Используй skill agent-loop-runner и запусти bootstrap loop.
+Команда: /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --bootstrap "..." --hindsight-bank agent-loop
+```
+
+## Основные флаги
+
+- `--task <id>`
+- `--bootstrap "<goal>"`
+- `--model <model-id>`
+- `--profile <delivery|discovery|hardening>`
+- `--retain-mode <sync|async|off>`
+- `--json-events`
+- `--max-iterations <n>`
+- `--timeout-minutes <n>`
+- `--spawn-cap <n>`
+- `--dry-run`
+
+## Model priority
+
 1. `--model <id>`
 2. `AGENT_LOOP_MODEL`
 3. default `gpt-5.3-codex`
 
-Пример:
+## Результат выполнения
 
-```bash
-AGENT_LOOP_MODEL=gpt-5-codex \
-/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
-  --driver agent \
-  --task agent-loop-84u.2
-```
+- `RunOutcome::AgentActionRequired` — loop вернул task id и список команд для агента.
+- `RunOutcome::NoReadyWork` — доступных задач нет.

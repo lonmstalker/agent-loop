@@ -1,17 +1,12 @@
 ---
 name: agent-loop-runner
-description: Запускает и сопровождает `agent-loop run` для полного цикла задачи (beads + hindsight + memory-bank + spec-first/product-storm + TDD). Использовать когда пользователь просит "запусти loop", "доведи задачу до done", "прогони agent-loop" или выполнить end-to-end проход по задаче из `bd`.
+description: Запускает и сопровождает `agent-loop run` как оркестратор, который генерирует итеративные команды для внешнего агента (beads + hindsight + memory-bank + spec-first/product-storm + TDD-plan).
 ---
 
 # Agent Loop Runner
 
 ## Purpose
-Дать агенту детерминированный способ запускать loop одной командой и корректно интерпретировать результат `RunOutcome`.
-
-## When to trigger
-- Пользователь просит запустить `agent-loop` для конкретной задачи.
-- Пользователь просит "включить loop" и довести задачу из `bd` до результата.
-- Нужен единый runnable шаблон для повторяемого запуска loop.
+Дать агенту детерминированный способ запуска `agent-loop` одной командой и корректной интерпретации `RunOutcome`.
 
 ## Workflow
 
@@ -21,38 +16,32 @@ description: Запускает и сопровождает `agent-loop run` д�
 
 2. Синхронизировать трекер:
    - `bd sync`
-   - если `--task` не передан пользователем: посмотреть кандидатов через `bd ready`.
+   - если `--task` не передан: посмотреть кандидатов через `bd ready`.
 
 3. Гарантировать release-бинарник:
-   - сначала выполнить: `cargo build --release` в корне проекта.
+   - `cargo build --release` в корне проекта.
 
 4. Собрать команду:
-   - базовый запуск из любой директории:
-     `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task <task-id> --driver agent --hindsight-bank agent-loop`
-   - если задач ещё нет: использовать bootstrap-режим
-     `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --bootstrap "<goal>" --driver agent --hindsight-bank agent-loop`
-   - если нужен discovery-проход без блокировки по clippy:
-     добавить `--profile discovery` (создаст quality debt child-задачу при clippy fail)
-   - если retain в hindsight не должен блокировать UX:
-     добавить `--retain-mode async` (или `--retain-mode off`)
-   - если нужна интеграция с оркестратором:
-     добавить `--json-events`
-   - модель не задавать без явной необходимости (по умолчанию `gpt-5.3-codex`).
+   - базово:
+     `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task <task-id> --hindsight-bank agent-loop`
+   - bootstrap (если задач ещё нет):
+     `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --bootstrap "<goal>" --hindsight-bank agent-loop`
+   - опции:
+     `--profile`, `--retain-mode`, `--json-events`, `--model`.
 
 5. Передать креды безопасно:
    - при наличии `OPENAI_API_KEY` используется он;
    - иначе используется `VIBEPROXY_API_KEY`;
    - если задан только `VIBEPROXY_API_KEY`, базовый URL автоматически `http://127.0.0.1:8318`.
-   - никогда не печатать токены в отчёте.
+   - токены в отчёт не печатать.
 
 6. Выполнить команду и обработать результат:
-   - `RunOutcome::Done` -> зафиксировать успех;
-   - `RunOutcome::NeedsHuman` -> вернуть причину и blocking child tasks;
+   - `RunOutcome::AgentActionRequired` -> вернуть task id + командный план;
    - `RunOutcome::NoReadyWork` -> сообщить, что нет доступных задач.
 
 7. После запуска:
    - `bd sync`;
-   - кратко сообщить выполненную команду, outcome и следующие ограничения (если есть).
+   - кратко сообщить команду и outcome.
 
 ## Command templates
 
@@ -61,37 +50,25 @@ description: Запускает и сопровождает `agent-loop run` д�
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --task <bd-task-id> \
-  --driver agent \
   --hindsight-bank agent-loop
 ```
 
-Bootstrap (когда нет задач в `bd`):
+Bootstrap:
 
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --bootstrap "<goal>" \
-  --driver agent \
   --hindsight-bank agent-loop
 ```
 
-Discovery + async retain + json events:
-
-```bash
-/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
-  --bootstrap "<goal>" \
-  --driver agent \
-  --profile discovery \
-  --retain-mode async \
-  --json-events \
-  --hindsight-bank agent-loop
-```
-
-Autonomous (loop сам запускает quality gates):
+С профилем/retain/events:
 
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --task <bd-task-id> \
-  --driver autonomous \
+  --profile discovery \
+  --retain-mode async \
+  --json-events \
   --hindsight-bank agent-loop
 ```
 
@@ -103,16 +80,8 @@ Autonomous (loop сам запускает quality gates):
   --model <model-id>
 ```
 
-С env override модели:
-
-```bash
-AGENT_LOOP_MODEL=<model-id> \
-/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
-  --task <bd-task-id>
-```
-
 ## Guardrails
+
 - Не использовать `--dry-run`, если пользователь явно не просил dry run.
 - Не менять `max_iterations`, `spawn_cap`, `timeout_minutes` без явного запроса.
-- Если loop вернул `NeedsHuman`, не скрывать причину и не отмечать задачу как завершённую.
-- Для production hardening использовать `--profile hardening`.
+- `agent-loop` не выполняет `cargo fmt/clippy/test` сам; эти команды выполняет внешний агент по сгенерированному плану.

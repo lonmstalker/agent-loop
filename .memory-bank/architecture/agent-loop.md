@@ -1,16 +1,12 @@
 # Agent Loop Architecture
 
-Single-run orchestrator with parent/child task model and hybrid done evaluator.
+Single-run orchestrator with parent/child task model.
 
 Core behavior:
 - Supports `--task` and `--bootstrap` parent selection.
-- Supports execution drivers:
-  - `agent` (default): emits iterative command plan for external agent execution.
-  - `autonomous`: executes quality gates and decisions internally.
-- Policy profiles:
-  - `delivery` (strict gates),
-  - `discovery` (default non-blocking `clippy` + quality debt child spawn),
-  - `hardening` (strict, ignores non-blocking overrides).
+- Generates iterative TDD command plan for external coding agent.
+- Does not run project quality commands (`cargo fmt/clippy/test`) internally.
+- Can spawn child tasks from `product-storm` with dedup + blocking dependency wiring.
 - Retain strategy for hindsight:
   - `sync`, `async`, `off`.
 - Optional `--json-events` stream for orchestration integrations.

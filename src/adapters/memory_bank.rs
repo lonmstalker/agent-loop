@@ -45,7 +45,7 @@ impl MemoryBankClient for FileMemoryBank {
         if !self.architecture_path().exists() {
             fs::write(
                 self.architecture_path(),
-                "# Agent Loop Architecture\n\nSingle-run orchestrator with parent/child task model and hybrid done evaluator.\n",
+                "# Agent Loop Architecture\n\nSingle-run orchestrator that generates iterative command plans for an external coding agent.\n",
             )?;
         }
 

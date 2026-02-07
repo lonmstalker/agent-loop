@@ -149,6 +149,14 @@ impl BeadsCli {
         });
         labels
     }
+
+    fn list_open_children(&self, parent_id: &str) -> Result<Vec<Task>> {
+        let value = self.run_json(&["children", parent_id, "--json"])?;
+        Ok(Self::parse_tasks(&value)
+            .into_iter()
+            .filter(|task| task.is_open())
+            .collect())
+    }
 }
 
 impl BeadsClient for BeadsCli {
@@ -293,24 +301,6 @@ impl BeadsClient for BeadsCli {
 
     fn add_blocking_dependency(&self, child_id: &str, parent_id: &str) -> Result<()> {
         let _ = self.run_checked(&["dep", child_id, "--blocks", parent_id])?;
-        Ok(())
-    }
-
-    fn list_open_children(&self, parent_id: &str) -> Result<Vec<Task>> {
-        let value = self.run_json(&["children", parent_id, "--json"])?;
-        Ok(Self::parse_tasks(&value)
-            .into_iter()
-            .filter(|task| task.is_open())
-            .collect())
-    }
-
-    fn close_task(&self, task_id: &str, reason: &str) -> Result<()> {
-        let _ = self.run_checked(&["close", task_id, "--reason", reason])?;
-        Ok(())
-    }
-
-    fn block_task(&self, task_id: &str, notes: &str) -> Result<()> {
-        let _ = self.run_checked(&["update", task_id, "--status", "blocked", "--notes", notes])?;
         Ok(())
     }
 
