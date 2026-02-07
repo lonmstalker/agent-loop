@@ -235,6 +235,12 @@ pub enum DoneDecision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunOutcome {
     NoReadyWork,
+    AgentActionRequired {
+        task_id: String,
+        commands: Vec<String>,
+        created_children: Vec<String>,
+        closed_children: Vec<String>,
+    },
     Done {
         task_id: String,
         created_children: Vec<String>,

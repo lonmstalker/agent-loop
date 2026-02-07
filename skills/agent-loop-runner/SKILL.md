@@ -28,9 +28,9 @@ description: Запускает и сопровождает `agent-loop run` д�
 
 4. Собрать команду:
    - базовый запуск из любой директории:
-     `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task <task-id> --hindsight-bank agent-loop`
+     `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task <task-id> --driver agent --hindsight-bank agent-loop`
    - если задач ещё нет: использовать bootstrap-режим
-     `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --bootstrap "<goal>" --hindsight-bank agent-loop`
+     `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --bootstrap "<goal>" --driver agent --hindsight-bank agent-loop`
    - если нужен discovery-проход без блокировки по clippy:
      добавить `--profile discovery` (создаст quality debt child-задачу при clippy fail)
    - если retain в hindsight не должен блокировать UX:
@@ -61,6 +61,7 @@ description: Запускает и сопровождает `agent-loop run` д�
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --task <bd-task-id> \
+  --driver agent \
   --hindsight-bank agent-loop
 ```
 
@@ -69,6 +70,7 @@ Bootstrap (когда нет задач в `bd`):
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --bootstrap "<goal>" \
+  --driver agent \
   --hindsight-bank agent-loop
 ```
 
@@ -77,9 +79,19 @@ Discovery + async retain + json events:
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --bootstrap "<goal>" \
+  --driver agent \
   --profile discovery \
   --retain-mode async \
   --json-events \
+  --hindsight-bank agent-loop
+```
+
+Autonomous (loop сам запускает quality gates):
+
+```bash
+/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
+  --task <bd-task-id> \
+  --driver autonomous \
   --hindsight-bank agent-loop
 ```
 

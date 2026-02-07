@@ -32,6 +32,7 @@ fn model_override_via_flag_or_env_has_priority_over_default() {
         small_child_threshold_minutes: 20,
         model: Some("env-model".to_string()),
         hindsight_bank: "agent-loop".to_string(),
+        driver: agent_loop::config::ExecutionDriver::Agent,
         profile: LoopProfile::Delivery,
         non_blocking_gates: vec![],
         retain_mode: RetainMode::Sync,
@@ -84,6 +85,18 @@ fn discovery_profile_adds_default_non_blocking_clippy() {
     let cfg: RunConfig = run.into();
 
     assert!(cfg.non_blocking_gates.contains(&GateName::Clippy));
+}
+
+#[test]
+fn defaults_to_agent_driver() {
+    let cli = Cli::parse_from(["agent-loop", "run"]);
+    let Commands::Run(run) = cli.command;
+    let cfg: RunConfig = run.into();
+
+    assert!(matches!(
+        cfg.driver,
+        agent_loop::config::ExecutionDriver::Agent
+    ));
 }
 
 #[test]

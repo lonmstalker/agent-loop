@@ -19,6 +19,12 @@ pub enum LoopProfile {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ExecutionDriver {
+    Agent,
+    Autonomous,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum RetainMode {
     Sync,
     Async,
@@ -77,6 +83,8 @@ pub struct RunCommand {
     pub model: Option<String>,
     #[arg(long, default_value = "agent-loop")]
     pub hindsight_bank: String,
+    #[arg(long, value_enum, default_value_t = ExecutionDriver::Agent)]
+    pub driver: ExecutionDriver,
     #[arg(long, value_enum, default_value_t = LoopProfile::Delivery)]
     pub profile: LoopProfile,
     #[arg(long, value_enum, value_delimiter = ',')]

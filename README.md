@@ -4,6 +4,7 @@
 `memory-bank -> product-storm/spec-first -> TDD (red/green/refactor) -> quality gates -> done evaluator`.
 
 По умолчанию модель: `gpt-5.3-codex`.
+По умолчанию driver: `agent` (loop выдаёт команды агенту, а не выполняет code-команды сам).
 
 ## Установка skill для Codex
 
@@ -39,6 +40,7 @@ cargo build --release
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --task <bd-task-id> \
+  --driver agent \
   --hindsight-bank agent-loop
 ```
 
@@ -47,6 +49,7 @@ cargo build --release
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --task agent-loop-84u.2 \
+  --driver agent \
   --hindsight-bank agent-loop
 ```
 
@@ -57,8 +60,18 @@ cargo build --release
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --bootstrap "Сформировать roadmap для production-ready agent-loop" \
+  --driver agent \
   --hindsight-bank agent-loop
 ```
+
+## Driver режимы
+
+- `--driver agent` (default):
+  - loop публикует итеративный TDD-командный план;
+  - агент выполняет команды и проверяет результат;
+  - loop сам не запускает `cargo fmt/clippy/test`.
+- `--driver autonomous`:
+  - loop выполняет quality gates и принятие решений сам.
 
 ## Профили и политика quality gates
 
@@ -77,6 +90,7 @@ cargo build --release
 ```bash
 agent-loop run \
   --bootstrap "Оптимизировать code-indexer: first-run index + disk usage" \
+  --driver autonomous \
   --hindsight-bank agent-loop \
   --profile discovery \
   --retain-mode async \
@@ -103,7 +117,7 @@ agent-loop run --task agent-loop-84u.2 --hindsight-bank agent-loop
 
 ```text
 Используй skill agent-loop-runner и запусти loop для задачи agent-loop-84u.2.
-Команда: /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task agent-loop-84u.2 --hindsight-bank agent-loop
+Команда: /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task agent-loop-84u.2 --driver agent --hindsight-bank agent-loop
 ```
 
 ## Переопределение модели (опционально)
@@ -118,5 +132,6 @@ agent-loop run --task agent-loop-84u.2 --hindsight-bank agent-loop
 ```bash
 AGENT_LOOP_MODEL=gpt-5-codex \
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
+  --driver agent \
   --task agent-loop-84u.2
 ```

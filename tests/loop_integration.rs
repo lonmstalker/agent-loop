@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
-use agent_loop::config::{LoopProfile, RetainMode};
+use agent_loop::config::{ExecutionDriver, LoopProfile, RetainMode};
 use agent_loop::contracts::{
     GateName, GateReport, ProductStormOutput, ReviewOutput, ReviewStatus, RunOutcome,
     SpawnTaskCandidate, SpawnTaskKind, SpecOutput, Task, TaskStatus,
@@ -420,6 +420,7 @@ fn run_config() -> RunConfig {
         small_child_threshold_minutes: 20,
         model: "gpt-5.3-codex".to_string(),
         hindsight_bank: "agent-loop".to_string(),
+        driver: ExecutionDriver::Autonomous,
         profile: LoopProfile::Delivery,
         non_blocking_gates: HashSet::new(),
         retain_mode: RetainMode::Sync,
@@ -463,6 +464,43 @@ fn no_ready_issue_returns_no_ready_work() {
 
     let outcome = loop_engine.run_once().unwrap();
     assert!(matches!(outcome, RunOutcome::NoReadyWork));
+}
+
+#[test]
+fn agent_driver_emits_commands_instead_of_running_checks() {
+    let beads = MockBeads::new(Some(parent_task()), vec![]);
+    let beads_state = beads.state.clone();
+    let mut cfg = run_config();
+    cfg.driver = ExecutionDriver::Agent;
+
+    let outcome = AgentLoop {
+        config: cfg,
+        beads: Box::new(beads),
+        hindsight: Box::new(MockHindsight::new()),
+        memory_bank: Box::new(MockMemory::new()),
+        llm: Box::new(MockLlm::new(ProductStormOutput::default(), vec![])),
+        gates: Box::new(MockGates::new(vec![GateReport::all_green()])),
+        evaluator: DoneEvaluator::default(),
+    }
+    .run_once()
+    .unwrap();
+
+    match outcome {
+        RunOutcome::AgentActionRequired {
+            task_id, commands, ..
+        } => {
+            assert_eq!(task_id, "parent-1");
+            assert!(!commands.is_empty());
+            assert!(commands.iter().any(|x| x.contains("RED")));
+            assert!(commands.iter().any(|x| x.contains("cargo test")));
+        }
+        _ => panic!("expected agent action required"),
+    }
+
+    let state = beads_state.lock().unwrap();
+    assert_eq!(state.close_calls, 0);
+    assert_eq!(state.block_calls, 0);
+    assert_eq!(state.notes_calls, 1);
 }
 
 #[test]

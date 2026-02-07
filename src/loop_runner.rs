@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use serde_json::json;
 
-use crate::config::{LoopProfile, RetainMode, RunCommand};
+use crate::config::{ExecutionDriver, LoopProfile, RetainMode, RunCommand};
 use crate::contracts::{
     DoneDecision, GateName, GateReport, ProductStormOutput, ReviewOutput, RunOutcome,
     SpawnTaskCandidate, SpawnTaskKind, SpecOutput, Task,
@@ -22,6 +22,7 @@ pub struct RunConfig {
     pub small_child_threshold_minutes: u32,
     pub model: String,
     pub hindsight_bank: String,
+    pub driver: ExecutionDriver,
     pub profile: LoopProfile,
     pub non_blocking_gates: HashSet<GateName>,
     pub retain_mode: RetainMode,
@@ -52,6 +53,7 @@ impl From<RunCommand> for RunConfig {
             small_child_threshold_minutes: value.small_child_threshold_minutes,
             model,
             hindsight_bank: value.hindsight_bank,
+            driver: value.driver,
             profile,
             non_blocking_gates,
             retain_mode: value.retain_mode,
@@ -189,6 +191,54 @@ impl AgentLoop {
         )
     }
 
+    fn build_agent_commands(&self, task: &Task, spec: &SpecOutput) -> Vec<String> {
+        let mut commands = Vec::new();
+        let acceptance = if spec.acceptance_criteria.is_empty() {
+            "- Validate task behavior against expected outcomes".to_string()
+        } else {
+            spec.acceptance_criteria
+                .iter()
+                .map(|x| format!("- {x}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        commands.push(format!(
+            "Task: {} ({})\nAcceptance criteria:\n{}",
+            task.id, task.title, acceptance
+        ));
+
+        for iteration in 1..=self.config.max_iterations {
+            commands.push(format!(
+                "Iteration {iteration}/{max}: RED -> write/update failing tests for one acceptance criterion",
+                max = self.config.max_iterations
+            ));
+            commands.push("Run: cargo test -- --nocapture".to_string());
+            commands
+                .push("GREEN -> implement minimal code to pass the new failing tests".to_string());
+            commands.push("Run: cargo test".to_string());
+            commands.push("REFACTOR -> clean code while preserving behavior".to_string());
+            commands.push("Run: cargo fmt -- --check".to_string());
+            commands.push("Run: cargo clippy -- -D warnings".to_string());
+            commands.push("Run: cargo test".to_string());
+        }
+
+        commands.push(format!(
+            "After completing commands, re-run: agent-loop run --task {} --driver agent --hindsight-bank {}",
+            task.id, self.config.hindsight_bank
+        ));
+
+        commands
+    }
+
+    fn format_agent_note(commands: &[String]) -> String {
+        let mut out = String::from("agent-loop (driver=agent) generated iterative command plan:\n");
+        for (idx, cmd) in commands.iter().enumerate() {
+            out.push_str(&format!("{}. {}\n", idx + 1, cmd));
+        }
+        out
+    }
+
     fn create_non_blocking_gate_debt(
         &self,
         parent: &Task,
@@ -312,6 +362,26 @@ impl AgentLoop {
                 &mut closed_children,
             )?;
             self.step("initial spawn candidates processed");
+        }
+
+        if matches!(self.config.driver, ExecutionDriver::Agent) {
+            self.step("driver=agent: generating iterative command plan");
+            let commands = self.build_agent_commands(&parent, &spec);
+            if !self.config.dry_run {
+                self.beads
+                    .add_notes(&parent.id, &Self::format_agent_note(&commands))?;
+                self.beads.sync()?;
+            }
+            self.retain_summary_best_effort(
+                &parent,
+                "Agent command plan generated; waiting for agent execution feedback".to_string(),
+            );
+            return Ok(RunOutcome::AgentActionRequired {
+                task_id: parent.id,
+                commands,
+                created_children,
+                closed_children,
+            });
         }
 
         let started_at = Instant::now();
@@ -509,6 +579,10 @@ impl AgentLoop {
     }
 
     fn should_inline_child(&self, candidate: &SpawnTaskCandidate) -> bool {
+        if matches!(self.config.driver, ExecutionDriver::Agent) {
+            return false;
+        }
+
         if !candidate.can_inline {
             return false;
         }
