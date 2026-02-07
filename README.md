@@ -50,6 +50,16 @@ cargo build --release
   --hindsight-bank agent-loop
 ```
 
+## Запуск product-storm без существующих задач
+
+`agent-loop` может сам создать bootstrap parent-задачу и сразу запустить loop:
+
+```bash
+/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
+  --bootstrap "Сформировать roadmap для production-ready agent-loop" \
+  --hindsight-bank agent-loop
+```
+
 ## Опционально: добавить бинарник в PATH
 
 ```bash

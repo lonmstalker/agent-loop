@@ -24,6 +24,8 @@ pub enum Commands {
 pub struct RunCommand {
     #[arg(long)]
     pub task: Option<String>,
+    #[arg(long, conflicts_with = "task")]
+    pub bootstrap: Option<String>,
     #[arg(long, default_value_t = DEFAULT_MAX_ITERATIONS)]
     pub max_iterations: u32,
     #[arg(long, default_value_t = DEFAULT_TIMEOUT_MINUTES)]
@@ -48,6 +50,13 @@ impl RunCommand {
             .clone()
             .filter(|x| !x.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_MODEL.to_string())
+    }
+
+    pub fn resolved_bootstrap_goal(&self) -> Option<String> {
+        self.bootstrap
+            .clone()
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
     }
 }
 

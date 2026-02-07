@@ -161,6 +161,42 @@ impl BeadsClient for BeadsCli {
         Ok(())
     }
 
+    fn create_bootstrap_parent_task(&self, goal: &str) -> Result<Task> {
+        let goal = goal.trim();
+        if goal.is_empty() {
+            bail!("bootstrap goal is empty");
+        }
+
+        let title = format!("[Bootstrap] Product storm: {goal}");
+        let description =
+            format!("Auto-created bootstrap task for agent-loop.\nProduct storm goal: {goal}");
+
+        let id = self
+            .run_checked(&[
+                "create",
+                "--title",
+                title.as_str(),
+                "--description",
+                description.as_str(),
+                "--type",
+                "feature",
+                "--priority",
+                "2",
+                "--labels",
+                "loop:bootstrap",
+                "--silent",
+            ])?
+            .trim()
+            .to_string();
+
+        if id.is_empty() {
+            bail!("bd create did not return issue id for bootstrap task");
+        }
+
+        let _ = self.run_checked(&["update", &id, "--claim"])?;
+        self.show_task(&id)
+    }
+
     fn claim_parent_task(&self, preferred_task: Option<&str>) -> Result<Option<Task>> {
         let task = if let Some(task_id) = preferred_task {
             self.show_task(task_id)?

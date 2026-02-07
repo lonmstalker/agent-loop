@@ -16,6 +16,7 @@ use agent_loop::loop_runner::{
 #[derive(Default)]
 struct BeadsState {
     ensure_calls: usize,
+    bootstrap_calls: usize,
     claim_calls: usize,
     sync_calls: usize,
     add_dep_calls: usize,
@@ -26,6 +27,7 @@ struct BeadsState {
     closed_ids: Vec<String>,
     blocked_ids: Vec<String>,
     noted_ids: Vec<String>,
+    bootstrap_goals: Vec<String>,
     children: Vec<Task>,
     parent: Option<Task>,
 }
@@ -52,6 +54,20 @@ impl BeadsClient for MockBeads {
     fn ensure_initialized(&self) -> Result<()> {
         self.state.lock().unwrap().ensure_calls += 1;
         Ok(())
+    }
+
+    fn create_bootstrap_parent_task(&self, goal: &str) -> Result<Task> {
+        let mut state = self.state.lock().unwrap();
+        state.bootstrap_calls += 1;
+        state.bootstrap_goals.push(goal.to_string());
+        Ok(Task {
+            id: "bootstrap-1".to_string(),
+            title: format!("[Bootstrap] Product storm: {goal}"),
+            description: format!("Bootstrap goal: {goal}"),
+            status: TaskStatus::Open,
+            labels: vec!["loop:bootstrap".to_string()],
+            parent_id: None,
+        })
     }
 
     fn claim_parent_task(&self, _preferred_task: Option<&str>) -> Result<Option<Task>> {
@@ -394,6 +410,7 @@ fn child_parent_task() -> Task {
 fn run_config() -> RunConfig {
     RunConfig {
         task_id: None,
+        bootstrap_goal: None,
         max_iterations: 3,
         timeout_minutes: 45,
         spawn_cap: 5,
@@ -440,6 +457,48 @@ fn no_ready_issue_returns_no_ready_work() {
 
     let outcome = loop_engine.run_once().unwrap();
     assert!(matches!(outcome, RunOutcome::NoReadyWork));
+}
+
+#[test]
+fn bootstrap_creates_parent_task_when_no_tasks_exist() {
+    let beads = MockBeads::new(None, vec![]);
+    let state = beads.state.clone();
+    let mut cfg = run_config();
+    cfg.bootstrap_goal = Some("Собрать roadmap продукта".to_string());
+
+    let outcome = AgentLoop {
+        config: cfg,
+        beads: Box::new(beads),
+        hindsight: Box::new(MockHindsight::new()),
+        memory_bank: Box::new(MockMemory::new()),
+        llm: Box::new(MockLlm::new(
+            ProductStormOutput::default(),
+            vec![ReviewOutput {
+                status: ReviewStatus::Done,
+                coverage_score: 1.0,
+                missing_items: vec![],
+                spawn_candidates: vec![],
+                risk_flags: vec![],
+            }],
+        )),
+        gates: Box::new(MockGates::new(vec![GateReport::all_green()])),
+        evaluator: DoneEvaluator::default(),
+    }
+    .run_once()
+    .unwrap();
+
+    match outcome {
+        RunOutcome::Done { task_id, .. } => assert_eq!(task_id, "bootstrap-1"),
+        _ => panic!("expected done"),
+    }
+
+    let state = state.lock().unwrap();
+    assert_eq!(state.bootstrap_calls, 1);
+    assert_eq!(state.claim_calls, 0);
+    assert_eq!(
+        state.bootstrap_goals,
+        vec!["Собрать roadmap продукта".to_string()]
+    );
 }
 
 #[test]

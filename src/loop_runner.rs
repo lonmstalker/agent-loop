@@ -12,6 +12,7 @@ use crate::evaluator::{DoneEvaluator, ParentDecisionInput};
 #[derive(Debug, Clone)]
 pub struct RunConfig {
     pub task_id: Option<String>,
+    pub bootstrap_goal: Option<String>,
     pub max_iterations: u32,
     pub timeout_minutes: u64,
     pub spawn_cap: usize,
@@ -24,9 +25,12 @@ pub struct RunConfig {
 
 impl From<RunCommand> for RunConfig {
     fn from(value: RunCommand) -> Self {
+        let task_id = value.task.clone();
+        let bootstrap_goal = value.resolved_bootstrap_goal();
         let model = value.resolved_model();
         Self {
-            task_id: value.task,
+            task_id,
+            bootstrap_goal,
             max_iterations: value.max_iterations,
             timeout_minutes: value.timeout_minutes,
             spawn_cap: value.spawn_cap,
@@ -51,6 +55,7 @@ impl RunConfig {
 
 pub trait BeadsClient: Send + Sync {
     fn ensure_initialized(&self) -> Result<()>;
+    fn create_bootstrap_parent_task(&self, goal: &str) -> Result<Task>;
     fn claim_parent_task(&self, preferred_task: Option<&str>) -> Result<Option<Task>>;
     fn sync(&self) -> Result<()>;
     fn search_duplicates(
@@ -115,12 +120,16 @@ impl AgentLoop {
 
         self.beads.ensure_initialized()?;
 
-        let parent = match self
-            .beads
-            .claim_parent_task(self.config.task_id.as_deref())?
-        {
-            Some(task) => task,
-            None => return Ok(RunOutcome::NoReadyWork),
+        let parent = if let Some(goal) = self.config.bootstrap_goal.as_deref() {
+            self.beads.create_bootstrap_parent_task(goal)?
+        } else {
+            match self
+                .beads
+                .claim_parent_task(self.config.task_id.as_deref())?
+            {
+                Some(task) => task,
+                None => return Ok(RunOutcome::NoReadyWork),
+            }
         };
 
         self.beads.sync()?;

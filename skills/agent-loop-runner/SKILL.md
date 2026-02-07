@@ -29,6 +29,8 @@ description: Запускает и сопровождает `agent-loop run` д�
 4. Собрать команду:
    - базовый запуск из любой директории:
      `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --task <task-id> --hindsight-bank agent-loop`
+   - если задач ещё нет: использовать bootstrap-режим
+     `/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run --bootstrap "<goal>" --hindsight-bank agent-loop`
    - модель не задавать без явной необходимости (по умолчанию `gpt-5.3-codex`).
 
 5. Передать креды безопасно:
@@ -53,6 +55,14 @@ description: Запускает и сопровождает `agent-loop run` д�
 ```bash
 /Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
   --task <bd-task-id> \
+  --hindsight-bank agent-loop
+```
+
+Bootstrap (когда нет задач в `bd`):
+
+```bash
+/Users/nikitakocnev/RustroverProjects/agent-loop/target/release/agent-loop run \
+  --bootstrap "<goal>" \
   --hindsight-bank agent-loop
 ```
 

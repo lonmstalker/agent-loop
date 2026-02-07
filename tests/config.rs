@@ -21,6 +21,7 @@ fn model_override_via_flag_or_env_has_priority_over_default() {
 
     let env_override = agent_loop::config::RunCommand {
         task: None,
+        bootstrap: None,
         max_iterations: 3,
         timeout_minutes: 45,
         spawn_cap: 5,
@@ -32,6 +33,18 @@ fn model_override_via_flag_or_env_has_priority_over_default() {
     };
 
     assert_eq!(env_override.resolved_model(), "env-model");
+}
+
+#[test]
+fn parses_bootstrap_goal_for_taskless_product_storm() {
+    let cli = Cli::parse_from(["agent-loop", "run", "--bootstrap", "Новый продукт"]);
+    let Commands::Run(run) = cli.command;
+
+    assert_eq!(run.task, None);
+    assert_eq!(
+        run.resolved_bootstrap_goal().as_deref(),
+        Some("Новый продукт")
+    );
 }
 
 #[test]
