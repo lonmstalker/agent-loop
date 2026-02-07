@@ -50,7 +50,7 @@ impl RunConfig {
 pub trait BeadsClient: Send + Sync {
     fn ensure_initialized(&self) -> Result<()>;
     fn create_bootstrap_parent_task(&self, goal: &str) -> Result<Task>;
-    fn claim_parent_task(&self, preferred_task: Option<&str>) -> Result<Option<Task>>;
+    fn claim_parent_task(&self, preferred_task: Option<&str>, claim: bool) -> Result<Option<Task>>;
     fn sync(&self) -> Result<()>;
     fn search_duplicates(
         &self,
@@ -224,7 +224,7 @@ impl AgentLoop {
             self.step("claiming parent task");
             match self
                 .beads
-                .claim_parent_task(self.config.task_id.as_deref())?
+                .claim_parent_task(self.config.task_id.as_deref(), !self.config.dry_run)?
             {
                 Some(task) => task,
                 None => return Ok(RunOutcome::NoReadyWork),

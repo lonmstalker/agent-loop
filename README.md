@@ -82,6 +82,8 @@ Bootstrap (если задач ещё нет):
 - `--spawn-cap <n>`
 - `--dry-run`
 
+`--dry-run` не делает `bd update --claim`, не создаёт child-задачи и не пишет notes/retain.
+
 ## Model priority
 
 1. `--model <id>`

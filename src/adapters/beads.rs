@@ -205,7 +205,7 @@ impl BeadsClient for BeadsCli {
         self.show_task(&id)
     }
 
-    fn claim_parent_task(&self, preferred_task: Option<&str>) -> Result<Option<Task>> {
+    fn claim_parent_task(&self, preferred_task: Option<&str>, claim: bool) -> Result<Option<Task>> {
         let task = if let Some(task_id) = preferred_task {
             self.show_task(task_id)?
         } else {
@@ -221,7 +221,9 @@ impl BeadsClient for BeadsCli {
             return Ok(None);
         }
 
-        let _ = self.run_checked(&["update", &task.id, "--claim"])?;
+        if claim {
+            let _ = self.run_checked(&["update", &task.id, "--claim"])?;
+        }
         Ok(Some(task))
     }
 

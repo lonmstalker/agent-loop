@@ -16,6 +16,7 @@ struct BeadsState {
     ensure_calls: usize,
     bootstrap_calls: usize,
     claim_calls: usize,
+    claim_update_calls: usize,
     sync_calls: usize,
     add_dep_calls: usize,
     notes_calls: usize,
@@ -64,9 +65,16 @@ impl BeadsClient for MockBeads {
         })
     }
 
-    fn claim_parent_task(&self, _preferred_task: Option<&str>) -> Result<Option<Task>> {
+    fn claim_parent_task(
+        &self,
+        _preferred_task: Option<&str>,
+        claim: bool,
+    ) -> Result<Option<Task>> {
         let mut state = self.state.lock().unwrap();
         state.claim_calls += 1;
+        if claim {
+            state.claim_update_calls += 1;
+        }
         Ok(state.parent.take())
     }
 
@@ -395,6 +403,7 @@ fn emits_agent_commands_and_adds_notes() {
 
     let state = beads_state.lock().unwrap();
     assert_eq!(state.notes_calls, 1);
+    assert_eq!(state.claim_update_calls, 1);
 }
 
 #[test]
@@ -524,4 +533,28 @@ fn retain_summary_happens_in_sync_mode() {
 
     assert!(matches!(outcome, RunOutcome::AgentActionRequired { .. }));
     assert_eq!(state.lock().unwrap().retain_calls, 1);
+}
+
+#[test]
+fn dry_run_does_not_claim_parent_task() {
+    let beads = MockBeads::new(Some(parent_task()), vec![]);
+    let beads_state = beads.state.clone();
+    let mut cfg = run_config();
+    cfg.dry_run = true;
+
+    let outcome = AgentLoop {
+        config: cfg,
+        beads: Box::new(beads),
+        hindsight: Box::new(MockHindsight::new()),
+        memory_bank: Box::new(MockMemory::new()),
+        llm: Box::new(MockLlm::new(ProductStormOutput::default())),
+    }
+    .run_once()
+    .unwrap();
+
+    assert!(matches!(outcome, RunOutcome::AgentActionRequired { .. }));
+    let state = beads_state.lock().unwrap();
+    assert_eq!(state.claim_calls, 1);
+    assert_eq!(state.claim_update_calls, 0);
+    assert_eq!(state.notes_calls, 0);
 }
